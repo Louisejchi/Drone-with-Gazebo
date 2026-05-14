@@ -1,0 +1,16 @@
+# ROS2
+build/
+install/
+log/
+__pycache__/
+*.pyc
+
+# TensorBoard
+ppo_drone_logs/
+
+# 大檔案（model 太大不放 git）
+*.zip
+
+# 暫存
+*.egg-info/
+

@@ -1,0 +1,26 @@
+stages:
+  - report
+
+generate_report:
+  stage: report
+  image: python:3.10-slim
+
+  before_script:
+    - pip install numpy
+
+  script:
+    - mkdir -p public
+    - python3 harness/report_from_json.py
+        --input harness_result.json
+        --output public/index.html
+
+  artifacts:
+    paths:
+      - public/
+
+  pages:
+    publish: public
+
+  only:
+    changes:
+      - harness_result.json   # 只有 JSON 更新時才觸發
