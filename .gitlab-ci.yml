@@ -9,18 +9,15 @@ generate_report:
     - pip install numpy
 
   script:
-    - mkdir -p nsysu_drone_control/public
+    - mkdir -p public
     - python3 nsysu_drone_control/harness/report_from_json.py
         --input nsysu_drone_control/harness_result.json
-        --output nsysu_drone_control/public/index.html
+        --output public/index.html
 
   artifacts:
     paths:
-      - nsysu_drone_control/public/
-
-  pages:
-    publish: public
+      - public/
 
   only:
     changes:
-      - harness_result.json   # 只有 JSON 更新時才觸發
+      - nsysu_drone_control/harness_result.json   # 只有 JSON 更新時才觸發
