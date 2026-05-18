@@ -23,7 +23,8 @@ setup(
             'teleop = nsysu_drone_control.teleop:main',
             'teleop_joystick = nsysu_drone_control.teleop_joystick:main',
             'open_loop_control = nsysu_drone_control.open_loop_control:main',
-            'drone_position_control = nsysu_drone_control.drone_position_control:main'
+            'drone_position_control = nsysu_drone_control.drone_position_control:main',
+            'fly_straight = nsysu_drone_control.fly_straight:main'
         ],
     },
 )

@@ -67,7 +67,8 @@ def run_episode(env, model, scenario):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', default='ppo_drone_random_target',
+    #parser.add_argument('--model', default='ppo_drone_random_target',
+    parser.add_argument('--model', default='checkpoints/ppo_drone_10000_steps',
                         help='模型檔案路徑')
     parser.add_argument('--n-easy',   type=int, default=10)
     parser.add_argument('--n-medium', type=int, default=10)
@@ -81,8 +82,17 @@ def main():
     ros = DroneROSInterface()
     executor = MultiThreadedExecutor()
     executor.add_node(ros)
-    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread = threading.Thread(target=executor.spin)
     spin_thread.start()
+
+    # 1. 先停止 ROS callback 來源
+    executor.shutdown()
+
+    # 2. 等 spin 完全結束
+    spin_thread.join()
+
+    # 3. 再 shutdown rclpy
+    rclpy.shutdown()
 
     # 等第一筆 pose
     print("等待 pose...")

@@ -10,7 +10,7 @@
 
 set -e
 
-GPU_ID=${GPU_ID:-3}
+GPU_ID=${GPU_ID:-0}
 VNC_PORT=${VNC_PORT:-5901}
 IMAGE=${IMAGE:-nsysu_drone_vnc:iron}
 CONTAINER_NAME=${CONTAINER_NAME:-nsysu_drone_vnc}
@@ -31,8 +31,10 @@ docker run \
     -it --rm \
     --gpus "\"device=${GPU_ID}\"" \
     -p ${VNC_PORT}:5901 \
+    -p 6006:6006 \
     --env=QT_X11_NO_MITSHM=1 \
     --privileged \
     --name="${CONTAINER_NAME}" \
     --hostname="$(hostname)" \
+    -v "$(pwd)":/ros2_ws/src \
     "${IMAGE}"

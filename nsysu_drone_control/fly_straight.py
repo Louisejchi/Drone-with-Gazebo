@@ -32,8 +32,8 @@ class FlyStraight(Node):
 
         # ========== 1. 設定目標點 B ==========
         # (x, y, z) 單位是公尺,你可以自由修改
-        self.target_x = 5.0
-        self.target_y = 3.0
+        self.target_x = 6.0
+        self.target_y = -3.0
         self.target_z = 2.0
 
         # ========== 2. 控制參數 ==========

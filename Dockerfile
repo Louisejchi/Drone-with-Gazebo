@@ -51,6 +51,20 @@ RUN curl -fsSL https://github.com/osrf/gazebo_models/archive/refs/heads/master.z
     mv /tmp/gazebo_models-master/* /root/.gazebo/models/ && \
     rm -rf /tmp/gazebo_models.zip /tmp/gazebo_models-master
 
+# ---------- 新增 ------------
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir \
+    numpy==1.24.4 \
+    gymnasium \
+    stable-baselines3 \
+    tensorboard 
+
+RUN apt-get update && apt-get install -y ros-iron-rqt*
+
 # ---------- Build workspace ----------
 WORKDIR /ros2_ws
 RUN apt-get update && \
@@ -130,3 +144,4 @@ RUN printf '%s\n' \
 
 WORKDIR /ros2_ws
 CMD ["/start_vnc.sh"]
+
