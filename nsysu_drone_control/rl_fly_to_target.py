@@ -18,7 +18,19 @@ import time
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
+# system archeticture
+'''
+ROS2/Gazebo
+    ↓
+DroneROSInterface
+    ↓
+DroneGymEnv
+    ↓
+PPO 訓練
+'''
 
+# ROS 跟 Python RL 的橋樑
+# 負責: 1. 收 ROS 資料 2. 發 ROS 指令 3. 幫 RL 拿到目前狀態
 class DroneROSInterface(Node):
     def __init__(self):
         super().__init__('rl_drone_interface',
@@ -29,18 +41,41 @@ class DroneROSInterface(Node):
                                True
                           )
                         ])
-        self.current_pose = np.zeros(3)
-        self.current_vel = np.zeros(3)
-        self.last_time = self.get_clock().now()
-        self._pose_lock = threading.Lock() # 保護共享資料
+        # 目前無人機位置
+	self.current_pose = np.zeros(3)
 
+	# 儲存目前速度
+        self.current_vel = np.zeros(3)
+        
+	# 紀錄上一筆時間
+	self.last_time = self.get_clock().now()
+        
+	# 多執行緒保護
+	# ROS thread 正在更新 pose、RL thread 正在讀 pose
+	# 可能同時存取
+	self._pose_lock = threading.Lock() # 保護共享資料
+        
+	# 建立 publish node: Twist 控制速度
         self.cmd_vel_pub = self.create_publisher(Twist, '/simple_drone/cmd_vel', 10)
+	
+	# Publisiher: 發送 takeoff 起飛指令
         self.takeoff_pub = self.create_publisher(Empty, '/simple_drone/takeoff', 10)
+
+	# Publisher:  發送 drone reset 指令
         self.reset_pub = self.create_publisher(Empty, '/simple_drone/reset', 10)
+
+	# 只要 topic /simple_drone/gt_pose 有新位置資料，ROS 就會自動呼叫：self._pose_cb()
+	# Subsciber: 訂閱無人機真實位置(gt_pose)
         self.pose_sub = self.create_subscription(Pose, '/simple_drone/gt_pose', self._pose_cb, 10)
+
+	# 建立 ROS service client : 用來呼叫 Gazebo 的 /reset_world service
         self.reset_world_client = self.create_client(EmptySrv, '/reset_world')
-        self.land_pub = self.create_publisher(Empty, '/simple_drone/land', 10
-                )
+	# Publisher: 發送 land 降落指令
+        self.land_pub = self.create_publisher(Empty, '/simple_drone/land', 10)
+
+
+    # pose callback:
+    # 每收到一次 gt_pose topic 就會被 ROS 自動呼叫
     def _pose_cb(self, msg: Pose):
         new_pose = np.array([msg.position.x, msg.position.y, msg.position.z])
         now = self.get_clock().now()
@@ -51,22 +86,23 @@ class DroneROSInterface(Node):
             self.current_pose = new_pose
             self.current_vel = np.zeros(3)
             return
-
+	# 計算速度: 這次更新距離上次多久
         dt = (now - self.last_time).nanoseconds / 1e9
         if dt > 0.001:
+	    # 速度 = 位移 / 時間
             self.current_vel = (new_pose - self.current_pose) / dt
             self.current_pose = new_pose
             self.last_time = now
 
-    def get_state(self):
+    def get_state(self): # RL 專門拿目前狀態的方法
         """thread-safe 讀取狀態"""
-        with self._pose_lock:
+        with self._pose_lock:  # 同一時間只能一個 thread 使用
             return self.current_pose.copy(), self.current_vel.copy()
 
-    def send_velocity(self, vx, vy, vz):
-        msg = Twist()
+    def send_velocity(self, vx, vy, vz): # 真正控制無人機飛行
+        msg = Twist() # 建立 ROS 速度息
         msg.linear.x, msg.linear.y, msg.linear.z = float(vx), float(vy), float(vz)
-        self.cmd_vel_pub.publish(msg)
+        self.cmd_vel_pub.publish(msg) # 送出去
 
     def reset_drone(self):
         
@@ -76,12 +112,12 @@ class DroneROSInterface(Node):
 
         # 確保上一個 episode 的指令都清空了
         time.sleep(1.0)
+
         # 步驟一：先 land，讓 plugin 回到乾淨狀態
         self.land_pub.publish(Empty())
         time.sleep(3.0)  # 等降落完成
 
         # 步驟二：reset world
-        # 依照論文建議進行世界與無人機重置 [cite: 101, 102]
         if self.reset_world_client.service_is_ready():
             future = self.reset_world_client.call_async(EmptySrv.Request())
             
@@ -94,54 +130,13 @@ class DroneROSInterface(Node):
 
         # 步驟三：takeoff
         self.takeoff_pub.publish(Empty())
-        self._wait_for_stable_height(min_z=0.5, timeout=10.0)
-        '''
-        # 等到 future 完成，最多等 3 秒
         
-        deadline = self.get_clock().now() + rclpy.duration.Duration(seconds=3)
-        while not future.done():
-            rclpy.spin_once(self, timeout_sec=0.1)
-            if self.get_clock().now() > deadline:
-                self.get_logger().warn('reset_world timeout')
-                break
-        
-        self.reset_pub.publish(Empty())
-        rclpy.spin_once(self, timeout_sec=0.5)
-        self.takeoff_pub.publish(Empty())
-        
-        # 修正三：等無人機高度穩定再離開，而不是固定等 1.5 秒
-        self._wait_for_stable_height(target_z=1.0, tolerance=0.3, timeout=5.0)
-        '''
+	# 步驟四: 等高度穩定
+	self._wait_for_stable_height(min_z=0.5, timeout=10.0)
+    
     def _wait_for_stable_height(self, min_z: float = 0.5, timeout: float = 10.0):
-        """等到無人機高度進入目標範圍才返回"""
-        # deadline = time.time() + timeout
-        """等高度穩定超過 min_z 即可，不限定要到達特定高度"""
-        #prev_z = 0.0
-        #stable_count = 0
-
-        # while time.time() < deadline:
-        #    #rclpy.spin_once(self, timeout_sec=0.1)
-        #    time.sleep(0.1)
-            
-        #    pose, _ = self.get_state()
-        #    z = pose[2]
-
-            # 高度夠高，且變化量很小（穩定了）
-        #    if z > min_z:
-                #stable_count += 1
-                #if stable_count >= 5:  # 連續 0.5 秒穩定
-        #        time.sleep(1.0)
-        #        return
-            #else:
-            #    stable_count = 0
-
-            # prev_z = z
-
-            # pose, _ = self.get_state()
-            #if abs(pose[2] - target_z) < tolerance:
-            #    time.sleep(0.3)
-            #    return
-        # 將 timeout 轉換為奈秒，並加上當前的 ROS 時間
+        
+	# 將 timeout 轉換為奈秒，並加上當前的 ROS 時間
         timeout_ns = int(timeout * 1e9)
         start_time = self.get_clock().now().nanoseconds
         deadline = start_time + timeout_ns
