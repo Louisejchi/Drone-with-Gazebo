@@ -105,7 +105,8 @@ class DroneROSInterface(Node):
 
         # 步驟一：先降落，讓插件回到乾淨狀態
         self.land_pub.publish(Empty())
-        self._wait_for_low_height(max_z=0.2, timeout=5.0)
+        #self._wait_for_low_height(max_z=0.2, timeout=5.0).
+        time.sleep(3.0)  # 等降落完成
 
         # 步驟二：如果 reset_world service ready，就呼叫它
         if self.reset_world_client.service_is_ready():
@@ -114,7 +115,8 @@ class DroneROSInterface(Node):
                 time.sleep(0.1)
 
         # 等待重置後 pose 穩定，避免直接起飛前狀態還沒就緒
-        self._wait_for_pose_stable(timeout=6.0)
+        #self._wait_for_pose_stable(timeout=6.0)
+        time.sleep(2.0)
 
         # 步驟三：起飛
         self.takeoff_pub.publish(Empty())
@@ -125,9 +127,12 @@ class DroneROSInterface(Node):
         """等待降落到低高度，避免直接重置時機過早。"""
         timeout_ns = int(timeout * 1e9) # 轉換成奈秒
         deadline = self.get_clock().now().nanoseconds + timeout_ns # 計算截止時間
-
         while self.get_clock().now().nanoseconds < deadline:
-            time.sleep(0.1)
+            # 使用 rclpy.spin_once 讓 ROS callback 被處理
+            try:
+                rclpy.spin_once(self, timeout_sec=0.1)
+            except Exception:
+                time.sleep(0.1)
             pose, _ = self.get_state()
             if pose[2] <= max_z:
                 return
@@ -140,9 +145,11 @@ class DroneROSInterface(Node):
         deadline = self.get_clock().now().nanoseconds + timeout_ns
         stable_count = 0
         prev_pose = None
-
         while self.get_clock().now().nanoseconds < deadline:
-            time.sleep(0.1)
+            try:
+                rclpy.spin_once(self, timeout_sec=0.1)
+            except Exception:
+                time.sleep(0.1)
             pose, _ = self.get_state()
             if prev_pose is not None and np.allclose(pose, prev_pose, atol=1e-3):
                 stable_count += 1
@@ -164,7 +171,10 @@ class DroneROSInterface(Node):
         republish_interval_ns = int(1.0 * 1e9)
 
         while self.get_clock().now().nanoseconds < deadline:
-            time.sleep(0.1)
+            try:
+                rclpy.spin_once(self, timeout_sec=0.1)
+            except Exception:
+                time.sleep(0.1)
             now = self.get_clock().now().nanoseconds
             pose, _ = self.get_state()
             if pose[2] > min_z:
@@ -204,9 +214,27 @@ class DroneGymEnv(gym.Env):
     def reset(self, seed=None, options=None):
         """環境重置：重置無人機並生成新目標。"""
         super().reset(seed=seed) # 呼叫父類別的 reset 以處理隨機種子
+        # 先叫 ROS 端重置並起飛
         self.ros.reset_drone()
         self.step_count = 0
 
+        # 等待 pose 穩定：reset/drone 起飛後，gt_pose 可能還沒更新
+        # 使用 rclpy.spin_once 以確保 ROS callback 被執行
+        wait_deadline = time.time() + 6.0
+        pose, vel = self.ros.get_state()
+        while time.time() < wait_deadline:
+            try:
+                rclpy.spin_once(self.ros, timeout_sec=0.1)
+            except Exception:
+                time.sleep(0.1)
+            pose, vel = self.ros.get_state()
+            # 要求：pose 有數值、z 高度超過 0.4m（已起飛）且速度不是異常大
+            if np.any(pose != 0.0) and pose[2] > 0.4 and np.linalg.norm(vel) < 10.0:
+                break
+        else:
+            print("⚠️ reset() 超時：在 6 秒內未取得穩定 pose，將接著生成目標（可能需要檢查 sim）")
+
+        # 取得當前 pose 再隨機生成一個距離較遠的目標
         pose, _ = self.ros.get_state()
         while True:
             self.target = np.random.uniform(low=[-5.0, -5.0, 0.5], high=[5.0, 5.0, 4.0]).astype(np.float32) # 生成新目標
@@ -395,6 +423,37 @@ def test(env):
         if terminated or truncated:
             print(f"🏁 測試結束 | 總獎勵: {total_reward:.2f} | 最終步數: {step} | success: {success}")
             break
+
+
+def evaluate(env, model=None, n_episodes: int = 10):
+    """Run multiple episodes and report success rate.
+
+    If `model` is provided, use it to select actions (deterministic). Otherwise use random actions.
+    """
+    successes = 0
+    total_rewards = []
+    for ep in range(n_episodes):
+        obs, _ = env.reset()
+        total_reward = 0.0
+        success = False
+        for step in range(env.max_steps):
+            if model is None:
+                action = env.action_space.sample()
+            else:
+                action, _ = model.predict(obs, deterministic=True)
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+            if info.get('is_success', False):
+                success = True
+            if terminated or truncated:
+                break
+        total_rewards.append(total_reward)
+        if success:
+            successes += 1
+
+    mean_reward = float(np.mean(total_rewards)) if total_rewards else 0.0
+    success_rate = successes / n_episodes if n_episodes > 0 else 0.0
+    print(f"Evaluate {n_episodes} eps | mean_reward: {mean_reward:.3f} | success: {successes}/{n_episodes} ({success_rate:.2%})")
 
 
 def sanity_check(ros: DroneROSInterface):
