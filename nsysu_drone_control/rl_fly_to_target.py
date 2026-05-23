@@ -122,13 +122,13 @@ class DroneROSInterface(Node):
 
     def _wait_for_low_height(self, max_z: float = 0.2, timeout: float = 5.0):
         """等待降落到低高度，避免直接重置時機過早。"""
-        timeout_ns = int(timeout * 1e9)
-        deadline = self.get_clock().now().nanoseconds + timeout_ns
+        timeout_ns = int(timeout * 1e9) # 轉換成奈秒
+        deadline = self.get_clock().now().nanoseconds + timeout_ns # 計算截止時間
 
         while self.get_clock().now().nanoseconds < deadline:
             time.sleep(0.1)
             pose, _ = self.get_state()
-            if pose[2] <= max_z:
+            if pose[2] <= max_z: 
                 return
 
         self.get_logger().warn(f'Landing timeout，目前高度: {self.get_state()[0][2]:.2f}m')
@@ -155,32 +155,33 @@ class DroneROSInterface(Node):
 class DroneGymEnv(gym.Env):
     def __init__(self, ros_interface: DroneROSInterface):
         super().__init__()
-        self.ros = ros_interface
-        self.action_space = spaces.Box(low=-0.6, high=0.6, shape=(3,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(6,), dtype=np.float32)
+        self.ros = ros_interface 
+        self.action_space = spaces.Box(low=-0.6, high=0.6, shape=(3,), dtype=np.float32) # 3 維速度指令：vx, vy, vz
+        self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(6,), dtype=np.float32) # 6 維觀測：相對位置 (x,y,z) 與速度 (vx,vy,vz)
 
         self.max_steps = 250
-        self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32) # 目標位置
         self.prev_dist = 0.0
 
     def _get_obs(self):
         """回傳當前 observation：相對位置與速度。"""
+        # 把觀測值正規化到約 [-1, 1] 範圍，讓 PPO 更好學習
         pose, vel = self.ros.get_state()
-        rel_pos = (self.target - pose) / 10.0
-        vel_norm = vel / 5.0
+        rel_pos = (self.target - pose) / 10.0 # 將距離縮放到約 [-1, 1] 範圍
+        vel_norm = vel / 5.0 # 假設最大速度約 5 m/s，將速度縮放到約 [-1, 1] 範圍
         return np.concatenate([rel_pos, vel_norm]).astype(np.float32)
 
     def reset(self, seed=None, options=None):
         """環境重置：重置無人機並生成新目標。"""
-        super().reset(seed=seed)
+        super().reset(seed=seed) # 呼叫父類別的 reset 以處理隨機種子
         self.ros.reset_drone()
         self.step_count = 0
 
         pose, _ = self.ros.get_state()
         while True:
-            self.target = np.random.uniform(low=[-5.0, -5.0, 0.5], high=[5.0, 5.0, 4.0]).astype(np.float32)
-            self.prev_dist = np.linalg.norm(pose - self.target)
-            if self.prev_dist > 1.5:
+            self.target = np.random.uniform(low=[-5.0, -5.0, 0.5], high=[5.0, 5.0, 4.0]).astype(np.float32) # 生成新目標
+            self.prev_dist = np.linalg.norm(pose - self.target) # 計算初始距離
+            if self.prev_dist > 1.5: # 確保目標不會太近，讓訓練更有挑戰性
                 break
 
         return self._get_obs(), {}
@@ -194,8 +195,9 @@ class DroneGymEnv(gym.Env):
 
         pose, _ = self.ros.get_state()
         obs = self._get_obs()
-        curr_dist = np.linalg.norm(pose - self.target)
-
+        curr_dist = np.linalg.norm(pose - self.target) # 計算當前距離
+        
+        # 獎勵設計：距離越近獎勵越高，快速接近目標也有額外獎勵，停滯不前有輕微懲罰
         reward = 3.0 * math.exp(-curr_dist)
         if curr_dist < 1.5:
             reward += 2.0 * math.exp(-curr_dist * 3)
@@ -207,10 +209,15 @@ class DroneGymEnv(gym.Env):
         self.prev_dist = curr_dist
 
         terminated = False
+        success = False
+        # 當距離小於 1.0m 且已經過 15 步，視為成功到達目標
+        # 剛 reset 後，無人機可能還沒穩定，或目標剛好生成在附近。因此給予一個緩衝期，讓無人機有時間調整位置。
         if curr_dist < 1.0 and self.step_count > 15:
             reward += 10.0
             terminated = True
+            success = True
 
+        # 如果高度過低或過高，視為失敗
         if self.step_count > 15:
             if pose[2] < 0.1 or pose[2] > 7.0:
                 reward -= 10.0
@@ -219,23 +226,23 @@ class DroneGymEnv(gym.Env):
                 reward -= 0.1
 
         truncated = self.step_count >= self.max_steps
-        return obs, reward, terminated, truncated, {}
+        return obs, reward, terminated, truncated, {'is_success': success}
 
-
+# 自訂 callback：定期輸出訓練進度與評估模型表現
 class TrainLogCallback(BaseCallback):
     def __init__(self, log_interval=2048):
         super().__init__()
         self.log_interval = log_interval
 
     def _on_step(self):
-        if self.n_calls % self.log_interval == 0:
-            if len(self.model.ep_info_buffer) > 0:
+        if self.n_calls % self.log_interval == 0: # 每 log_interval 步輸出一次訓練進度
+            if len(self.model.ep_info_buffer) > 0: # 確保有 episode 資訊可用
                 mean_reward = np.mean([ep['r'] for ep in self.model.ep_info_buffer])
                 mean_len = np.mean([ep['l'] for ep in self.model.ep_info_buffer])
                 print(f"Steps: {self.num_timesteps:6d} | mean_reward: {mean_reward:8.2f} | mean_ep_len: {mean_len:6.1f}")
         return True
 
-
+# 自訂 callback：定期評估模型表現，並在表現提升時保存最佳模型
 class BestModelCallback(BaseCallback):
     def __init__(self, env, save_path="./checkpoints2/best/best_model.zip", verbose=1):
         super().__init__(verbose)
@@ -244,21 +251,28 @@ class BestModelCallback(BaseCallback):
         self.best_score = -np.inf
 
     def _on_step(self):
-        if self.n_calls % 10000 == 0:
+        if self.n_calls % 10000 == 0: # 每 10000 步評估一次模型表現
             scores = []
+            successes = 0
             for _ in range(3):
                 obs, _ = self.env.reset()
                 done = False
                 total_reward = 0
+                episode_success = False
                 while not done:
                     action, _ = self.model.predict(obs, deterministic=True)
-                    obs, reward, terminated, truncated, _ = self.env.step(action)
+                    obs, reward, terminated, truncated, info = self.env.step(action)
                     done = terminated or truncated
                     total_reward += reward
+                    if info.get('is_success', False):
+                        episode_success = True
                 scores.append(total_reward)
+                if episode_success:
+                    successes += 1
 
             mean_score = np.mean(scores)
-            print(f"[Eval] score = {mean_score:.3f}")
+            success_rate = successes / len(scores)
+            print(f"[Eval] score = {mean_score:.3f} | success rate = {successes}/{len(scores)} ({success_rate:.2%})")
 
             if mean_score > self.best_score:
                 self.best_score = mean_score
@@ -300,17 +314,20 @@ def test(env):
     obs, _ = env.reset()
     total_reward = 0
 
+    success = False
     for step in range(env.max_steps):
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
+        if info.get('is_success', False):
+            success = True
 
-        dist = np.linalg.norm(obs[:3] * 10.0)
+        dist = np.linalg.norm(obs[:3] * 10.0) # 反向縮放回實際距離
         if step % 20 == 0 or terminated:
             print(f"Step {step:3d} | 距離目標: {dist:.2f}m | 獎勵: {reward:.2f}")
 
         if terminated or truncated:
-            print(f"🏁 測試結束 | 總獎勵: {total_reward:.2f} | 最終步數: {step}")
+            print(f"🏁 測試結束 | 總獎勵: {total_reward:.2f} | 最終步數: {step} | success: {success}")
             break
 
 
