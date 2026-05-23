@@ -230,9 +230,10 @@ class DroneROSInterface(Node):
 
 
 class DroneGymEnv(gym.Env):
-    def __init__(self, ros_interface: DroneROSInterface):
+    def __init__(self, ros_interface: DroneROSInterface, verbose_step: bool = False):
         super().__init__()
-        self.ros = ros_interface 
+        self.ros = ros_interface
+        self.verbose_step = verbose_step
         self.action_space = spaces.Box(low=-0.6, high=0.6, shape=(3,), dtype=np.float32) # 3 維速度指令：vx, vy, vz
         self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(6,), dtype=np.float32) # 6 維觀測：相對位置 (x,y,z) 與速度 (vx,vy,vz)
 
@@ -321,6 +322,14 @@ class DroneGymEnv(gym.Env):
                 reward -= 0.1
 
         truncated = self.step_count >= self.max_steps
+        if self.verbose_step:
+            print(
+                f"Step {self.step_count:3d} | action: [{vx:.2f}, {vy:.2f}, {vz:.2f}] | "
+                f"pose: [{pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f}] | "
+                f"target: [{self.target[0]:.2f}, {self.target[1]:.2f}, {self.target[2]:.2f}] | "
+                f"dist: {curr_dist:.2f} | reward: {reward:.2f} | "
+                f"done: {terminated or truncated}"
+            )
         return obs, reward, terminated, truncated, {'is_success': success}
 
 # 自訂 callback：定期輸出訓練進度與評估模型表現
@@ -507,6 +516,7 @@ def main():
     parser.add_argument('--mode', choices=['train', 'test', 'check'], default='train')
     parser.add_argument('--resume', action='store_true', help='Continue training from the latest checkpoint in checkpoints2/last')
     parser.add_argument('--checkpoint', type=str, default=None, help='Explicit checkpoint file to resume training from')
+    parser.add_argument('--verbose-steps', action='store_true', help='Print information for every environment step')
     args = parser.parse_args()
     rclpy.init()
     ros = DroneROSInterface()
@@ -515,6 +525,8 @@ def main():
     executor.add_node(ros)
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
+
+    env = DroneGymEnv(ros, verbose_step=args.verbose_steps)
 
     try:
         if args.mode == 'check':
