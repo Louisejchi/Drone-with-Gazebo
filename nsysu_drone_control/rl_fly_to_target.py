@@ -165,11 +165,7 @@ class DroneROSInterface(Node):
         timeout_ns = int(timeout * 1e9) # 轉換成奈秒
         deadline = self.get_clock().now().nanoseconds + timeout_ns # 計算截止時間
         while self.get_clock().now().nanoseconds < deadline:
-            # 使用 rclpy.spin_once 讓 ROS callback 被處理
-            try:
-                rclpy.spin_once(self, timeout_sec=0.1)
-            except Exception:
-                time.sleep(0.1)
+            time.sleep(0.1)
             pose, _ = self.get_state()
             if pose[2] <= max_z:
                 return
@@ -183,10 +179,7 @@ class DroneROSInterface(Node):
         stable_count = 0
         prev_pose = None
         while self.get_clock().now().nanoseconds < deadline:
-            try:
-                rclpy.spin_once(self, timeout_sec=0.1)
-            except Exception:
-                time.sleep(0.1)
+            time.sleep(0.1)
             pose, _ = self.get_state()
             if prev_pose is not None and np.allclose(pose, prev_pose, atol=1e-3):
                 stable_count += 1
@@ -208,10 +201,7 @@ class DroneROSInterface(Node):
         republish_interval_ns = int(1.0 * 1e9)
 
         while self.get_clock().now().nanoseconds < deadline:
-            try:
-                rclpy.spin_once(self, timeout_sec=0.1)
-            except Exception:
-                time.sleep(0.1)
+            time.sleep(0.1)
             now = self.get_clock().now().nanoseconds
             pose, _ = self.get_state()
             if pose[2] > min_z:
@@ -261,10 +251,7 @@ class DroneGymEnv(gym.Env):
         wait_deadline = time.time() + 6.0
         pose, vel = self.ros.get_state()
         while time.time() < wait_deadline:
-            try:
-                rclpy.spin_once(self.ros, timeout_sec=0.1)
-            except Exception:
-                time.sleep(0.1)
+            time.sleep(0.1)
             pose, vel = self.ros.get_state()
             # 要求：pose 有數值、z 高度超過 0.4m（已起飛）且速度不是異常大
             if np.any(pose != 0.0) and pose[2] > 0.4 and np.linalg.norm(vel) < 10.0:
@@ -275,7 +262,7 @@ class DroneGymEnv(gym.Env):
         # 取得當前 pose 再隨機生成一個距離較遠的目標
         pose, _ = self.ros.get_state()
         while True:
-            self.target = np.random.uniform(low=[-5.0, -5.0, 0.5], high=[5.0, 5.0, 4.0]).astype(np.float32) # 生成新目標
+            self.target = np.random.uniform(low=[-8.0, -8.0, 0.5], high=[8.0, 8.0, 4.0]).astype(np.float32) # 生成新目標
             self.prev_dist = np.linalg.norm(pose - self.target) # 計算初始距離
             if self.prev_dist > 1.5: # 確保目標不會太近，讓訓練更有挑戰性
                 break
@@ -348,40 +335,32 @@ class TrainLogCallback(BaseCallback):
 
 # 自訂 callback：定期評估模型表現，並在表現提升時保存最佳模型
 class BestModelCallback(BaseCallback):
-    def __init__(self, env, save_path="./checkpoints2/best/best_model.zip", verbose=1):
+    def __init__(self, save_path="./checkpoints2/best/best_model.zip", eval_freq=10000, verbose=1):
         super().__init__(verbose)
-        self.env = env
         self.save_path = save_path
+        self.eval_freq = eval_freq
         self.best_score = -np.inf
 
     def _on_step(self):
-        if self.n_calls % 10000 == 0: # 每 10000 步評估一次模型表現
-            scores = []
-            successes = 0
-            for _ in range(3):
-                obs, _ = self.env.reset()
-                done = False
-                total_reward = 0
-                episode_success = False
-                while not done:
-                    action, _ = self.model.predict(obs, deterministic=True) # 評估時使用確定性動作
-                    obs, reward, terminated, truncated, info = self.env.step(action) # 注意這裡 step 的回傳值包含 info 字典
-                    done = terminated or truncated
-                    total_reward += reward
-                    if info.get('is_success', False):
-                        episode_success = True
-                scores.append(total_reward)
-                if episode_success:
-                    successes += 1
+        if self.n_calls % self.eval_freq == 0:
+            # 直接從訓練過程的 episode buffer 拿資料，不需要額外跑 episode
+            if len(self.model.ep_info_buffer) > 0:
+                mean_score = np.mean([ep['r'] for ep in self.model.ep_info_buffer])
+                mean_len = np.mean([ep['l'] for ep in self.model.ep_info_buffer])
+                # 計算成功率：reward > 某個門檻視為成功
+                success_count = sum(1 for ep in self.model.ep_info_buffer if ep['r'] > 50)
+                success_rate = success_count / len(self.model.ep_info_buffer)
 
-            mean_score = np.mean(scores)
-            success_rate = successes / len(scores)
-            print(f"[Eval] score = {mean_score:.3f} | success rate = {successes}/{len(scores)} ({success_rate:.2%})")
+                print(f"[Eval] steps={self.num_timesteps} | "
+                      f"score={mean_score:.2f} | "
+                      f"ep_len={mean_len:.1f} | "
+                      f"success_rate={success_rate:.2%}")
 
-            if mean_score > self.best_score:
-                self.best_score = mean_score
-                print("🔥 New best model saved!")
-                self.model.save(self.save_path)
+                if mean_score > self.best_score:
+                    self.best_score = mean_score
+                    print("🔥 New best model saved!")
+                    os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+                    self.model.save(self.save_path)
         return True
 
 
@@ -395,11 +374,11 @@ def find_latest_checkpoint(folder='./checkpoints2/last'):
         return None
 
     def checkpoint_step(name):
-        parts = name.rstrip('.zip').split('_')
-        for part in reversed(parts):
-            if part.endswith('steps'):
+        parts = name.replace('.zip', '').split('_')
+        for i, part in enumerate(parts):
+            if part == 'steps' and i > 0:
                 try:
-                    return int(part[:-5])
+                    return int(parts[i-1])
                 except ValueError:
                     continue
         return 0
@@ -416,8 +395,8 @@ def train(env, resume=False, checkpoint_path=None):
     )
 
     best_callback = BestModelCallback(
-        env=env,
-        save_path="./checkpoints2/best/best_model.zip"
+        save_path="./checkpoints2/best/best_model.zip",
+        eval_freq=10000
     )
 
     if resume:
@@ -435,9 +414,9 @@ def train(env, resume=False, checkpoint_path=None):
             print("⚠️ 找不到可用的 checkpoint，將從頭開始訓練。")
         model = PPO(
             'MlpPolicy', env, verbose=1,
-            learning_rate=1e-4,
+            learning_rate=3e-4, #1E-4
             n_steps=2048,
-            batch_size=128,
+            batch_size=64, # 128
             tensorboard_log='./ppo_drone_logs/'
         )
 
@@ -532,10 +511,8 @@ def main():
         if args.mode == 'check':
             sanity_check(ros)
         elif args.mode == 'train':
-            env = DroneGymEnv(ros)
             train(env, resume=args.resume, checkpoint_path=args.checkpoint)
         else:
-            env = DroneGymEnv(ros)
             test(env)
     finally:
         executor.shutdown()
