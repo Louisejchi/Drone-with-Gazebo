@@ -119,6 +119,43 @@ class DroneROSInterface(Node):
         time.sleep(2.0)
 
         # 步驟三：起飛
+        # 在發 takeoff 前，確認有 subscriber 在聽這個 topic（plugin/driver 是否就緒）
+        try:
+            wait_start = time.time()
+            while time.time() - wait_start < 3.0:
+                try:
+                    subs = self.takeoff_pub.get_subscription_count()
+                except Exception:
+                    subs = 0
+                if subs > 0:
+                    break
+                time.sleep(0.1)
+            if subs == 0:
+                self.get_logger().warn('No subscribers for /simple_drone/takeoff; takeoff may not be handled by simulator')
+            else:
+                self.get_logger().info(f'/simple_drone/takeoff subscribers: {subs}')
+        except Exception:
+            pass
+
+        # 確認 gt_pose 有 publisher（sim 正在發 pose）
+        try:
+            pub_count = 0
+            wait_start = time.time()
+            while time.time() - wait_start < 3.0:
+                try:
+                    pub_count = self.pose_sub.get_publisher_count()
+                except Exception:
+                    pub_count = 0
+                if pub_count > 0:
+                    break
+                time.sleep(0.1)
+            if pub_count == 0:
+                self.get_logger().warn('No publishers for /simple_drone/gt_pose; simulator may not be publishing pose')
+            else:
+                self.get_logger().info(f'/simple_drone/gt_pose publishers: {pub_count}')
+        except Exception:
+            pass
+
         self.takeoff_pub.publish(Empty())
         # 步驟四：等待高度穩定
         self._wait_for_stable_height(min_z=0.5, timeout=12.0)
@@ -425,35 +462,7 @@ def test(env):
             break
 
 
-def evaluate(env, model=None, n_episodes: int = 10):
-    """Run multiple episodes and report success rate.
 
-    If `model` is provided, use it to select actions (deterministic). Otherwise use random actions.
-    """
-    successes = 0
-    total_rewards = []
-    for ep in range(n_episodes):
-        obs, _ = env.reset()
-        total_reward = 0.0
-        success = False
-        for step in range(env.max_steps):
-            if model is None:
-                action = env.action_space.sample()
-            else:
-                action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
-            total_reward += reward
-            if info.get('is_success', False):
-                success = True
-            if terminated or truncated:
-                break
-        total_rewards.append(total_reward)
-        if success:
-            successes += 1
-
-    mean_reward = float(np.mean(total_rewards)) if total_rewards else 0.0
-    success_rate = successes / n_episodes if n_episodes > 0 else 0.0
-    print(f"Evaluate {n_episodes} eps | mean_reward: {mean_reward:.3f} | success: {successes}/{n_episodes} ({success_rate:.2%})")
 
 
 def sanity_check(ros: DroneROSInterface):
