@@ -113,12 +113,13 @@ class DroneROSInterface(Node):
             while not future.done():
                 time.sleep(0.1)
 
-        time.sleep(0.5)
+        # 等待重置後 pose 穩定，避免直接起飛前狀態還沒就緒
+        self._wait_for_pose_stable(timeout=6.0)
 
         # 步驟三：起飛
         self.takeoff_pub.publish(Empty())
         # 步驟四：等待高度穩定
-        self._wait_for_stable_height(min_z=0.5, timeout=10.0)
+        self._wait_for_stable_height(min_z=0.5, timeout=12.0)
 
     def _wait_for_low_height(self, max_z: float = 0.2, timeout: float = 5.0):
         """等待降落到低高度，避免直接重置時機過早。"""
@@ -128,19 +129,43 @@ class DroneROSInterface(Node):
         while self.get_clock().now().nanoseconds < deadline:
             time.sleep(0.1)
             pose, _ = self.get_state()
-            if pose[2] <= max_z: 
+            if pose[2] <= max_z:
                 return
 
         self.get_logger().warn(f'Landing timeout，目前高度: {self.get_state()[0][2]:.2f}m')
 
-    def _wait_for_stable_height(self, min_z: float = 0.5, timeout: float = 10.0):
+    def _wait_for_pose_stable(self, timeout: float = 6.0):
+        """等待 reset 後 pose 穩定，避免在無人機尚未初始化時起飛。"""
+        timeout_ns = int(timeout * 1e9)
+        deadline = self.get_clock().now().nanoseconds + timeout_ns
+        stable_count = 0
+        prev_pose = None
+
+        while self.get_clock().now().nanoseconds < deadline:
+            time.sleep(0.1)
+            pose, _ = self.get_state()
+            if prev_pose is not None and np.allclose(pose, prev_pose, atol=1e-3):
+                stable_count += 1
+                if stable_count >= 5:
+                    return
+            else:
+                stable_count = 0
+            prev_pose = pose
+
+        self.get_logger().warn('Reset world 之後 pose 未能穩定，本次起飛可能失敗。')
+
+    def _wait_for_stable_height(self, min_z: float = 0.5, timeout: float = 12.0):
         """等待高度達到最低門檻，並持續穩定一段時間。"""
         timeout_ns = int(timeout * 1e9)
         deadline = self.get_clock().now().nanoseconds + timeout_ns
         stable_count = 0
+        last_z = None
+        last_publish = self.get_clock().now().nanoseconds
+        republish_interval_ns = int(1.0 * 1e9)
 
         while self.get_clock().now().nanoseconds < deadline:
             time.sleep(0.1)
+            now = self.get_clock().now().nanoseconds
             pose, _ = self.get_state()
             if pose[2] > min_z:
                 stable_count += 1
@@ -148,6 +173,11 @@ class DroneROSInterface(Node):
                     return
             else:
                 stable_count = 0
+                if last_z is not None and pose[2] - last_z < 0.01 and now - last_publish > republish_interval_ns:
+                    self.get_logger().info('Takeoff 未上升，重新發送 takeoff 指令...')
+                    self.takeoff_pub.publish(Empty())
+                    last_publish = now
+            last_z = pose[2]
 
         self.get_logger().warn(f'Takeoff timeout，目前高度: {self.get_state()[0][2]:.2f}m')
 
