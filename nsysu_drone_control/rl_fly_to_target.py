@@ -260,8 +260,8 @@ class BestModelCallback(BaseCallback):
                 total_reward = 0
                 episode_success = False
                 while not done:
-                    action, _ = self.model.predict(obs, deterministic=True)
-                    obs, reward, terminated, truncated, info = self.env.step(action)
+                    action, _ = self.model.predict(obs, deterministic=True) # 評估時使用確定性動作
+                    obs, reward, terminated, truncated, info = self.env.step(action) # 注意這裡 step 的回傳值包含 info 字典
                     done = terminated or truncated
                     total_reward += reward
                     if info.get('is_success', False):
@@ -281,7 +281,30 @@ class BestModelCallback(BaseCallback):
         return True
 
 
-def train(env):
+def find_latest_checkpoint(folder='./checkpoints2/last'):
+    """從 checkpoint 資料夾找出最後建立的模型檔。"""
+    if not os.path.isdir(folder):
+        return None
+
+    checkpoint_files = [f for f in os.listdir(folder) if f.endswith('.zip')]
+    if not checkpoint_files:
+        return None
+
+    def checkpoint_step(name):
+        parts = name.rstrip('.zip').split('_')
+        for part in reversed(parts):
+            if part.endswith('steps'):
+                try:
+                    return int(part[:-5])
+                except ValueError:
+                    continue
+        return 0
+
+    checkpoint_files.sort(key=lambda f: checkpoint_step(f), reverse=True)
+    return os.path.join(folder, checkpoint_files[0])
+
+
+def train(env, resume=False, checkpoint_path=None):
     checkpoint_callback = CheckpointCallback(
         save_freq=10000,
         save_path='./checkpoints2/last/',
@@ -293,13 +316,26 @@ def train(env):
         save_path="./checkpoints2/best/best_model.zip"
     )
 
-    model = PPO(
-        'MlpPolicy', env, verbose=1,
-        learning_rate=1e-4,
-        n_steps=2048,
-        batch_size=128,
-        tensorboard_log='./ppo_drone_logs/'
-    )
+    if resume:
+        if checkpoint_path is None:
+            checkpoint_path = find_latest_checkpoint('./checkpoints2/last')
+            if checkpoint_path is not None:
+                print(f"Resume training from latest checkpoint: {checkpoint_path}")
+        else:
+            print(f"Resume training from specified checkpoint: {checkpoint_path}")
+
+    if resume and checkpoint_path is not None and os.path.isfile(checkpoint_path):
+        model = PPO.load(checkpoint_path, env=env)
+    else:
+        if resume:
+            print("⚠️ 找不到可用的 checkpoint，將從頭開始訓練。")
+        model = PPO(
+            'MlpPolicy', env, verbose=1,
+            learning_rate=1e-4,
+            n_steps=2048,
+            batch_size=128,
+            tensorboard_log='./ppo_drone_logs/'
+        )
 
     model.learn(
         total_timesteps=500_000,
@@ -371,6 +407,8 @@ def sanity_check(ros: DroneROSInterface):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['train', 'test', 'check'], default='train')
+    parser.add_argument('--resume', action='store_true', help='Continue training from the latest checkpoint in checkpoints2/last')
+    parser.add_argument('--checkpoint', type=str, default=None, help='Explicit checkpoint file to resume training from')
     args = parser.parse_args()
     rclpy.init()
     ros = DroneROSInterface()
@@ -385,7 +423,7 @@ def main():
             sanity_check(ros)
         elif args.mode == 'train':
             env = DroneGymEnv(ros)
-            train(env)
+            train(env, resume=args.resume, checkpoint_path=args.checkpoint)
         else:
             env = DroneGymEnv(ros)
             test(env)
