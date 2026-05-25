@@ -409,6 +409,11 @@ def train(env, resume=False, checkpoint_path=None):
 
     if resume and checkpoint_path is not None and os.path.isfile(checkpoint_path):
         model = PPO.load(checkpoint_path, env=env)
+        # 降低 learning rate
+        model.learning_rate = 1e-4
+        for param_group in model.policy.optimizer.param_groups:
+            param_group['lr'] = 1e-4
+            print(f"Learning rate 調整為 1e-4")
     else:
         if resume:
             print("⚠️ 找不到可用的 checkpoint，將從頭開始訓練。")
