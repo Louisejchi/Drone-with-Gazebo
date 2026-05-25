@@ -227,7 +227,7 @@ class DroneGymEnv(gym.Env):
         self.action_space = spaces.Box(low=-0.6, high=0.6, shape=(3,), dtype=np.float32) # 3 維速度指令：vx, vy, vz
         self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(6,), dtype=np.float32) # 6 維觀測：相對位置 (x,y,z) 與速度 (vx,vy,vz)
 
-        self.max_steps = 250
+        self.max_steps = 400 #250
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32) # 目標位置
         self.prev_dist = 0.0
 
