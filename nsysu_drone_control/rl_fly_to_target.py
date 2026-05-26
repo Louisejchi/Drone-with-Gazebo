@@ -282,11 +282,11 @@ class DroneGymEnv(gym.Env):
         
         # 獎勵設計：距離越近獎勵越高，快速接近目標也有額外獎勵，停滯不前有輕微懲罰
         reward = 3.0 * math.exp(-curr_dist)
-        if curr_dist < 1.5:
-            reward += 2.0 * math.exp(-curr_dist * 3)
+        if curr_dist < 2.0:
+            reward += 5.0 * math.exp(-curr_dist * 2)
 
         if abs(self.prev_dist - curr_dist) < 0.01 and self.step_count > 15:
-            reward -= 0.2
+            reward -= 0.5
 
         reward += (self.prev_dist - curr_dist) * 1.5
         self.prev_dist = curr_dist
@@ -410,10 +410,16 @@ def train(env, resume=False, checkpoint_path=None):
     if resume and checkpoint_path is not None and os.path.isfile(checkpoint_path):
         model = PPO.load(checkpoint_path, env=env)
         # 降低 learning rate
-        model.learning_rate = 1e-4
+        new_lr = 1e-4
+        model.learning_rate = new_lr
+        model.lr_schedule = lambda _: new_lr
+
         for param_group in model.policy.optimizer.param_groups:
-            param_group['lr'] = 1e-4
+            param_group['lr'] = new_lr
             print(f"Learning rate 調整為 1e-4")
+
+        print("optimizer lr =", model.policy.optimizer.param_groups[0]['lr'])
+        print("schedule lr =", model.lr_schedule(1.0))
     else:
         if resume:
             print("⚠️ 找不到可用的 checkpoint，將從頭開始訓練。")
