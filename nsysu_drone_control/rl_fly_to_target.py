@@ -386,6 +386,66 @@ def find_latest_checkpoint(folder='./checkpoints2/last'):
     checkpoint_files.sort(key=lambda f: checkpoint_step(f), reverse=True)
     return os.path.join(folder, checkpoint_files[0])
 
+def plot_trajectory(trajectory, target):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    traj = np.array(trajectory)
+    fig = plt.figure(figsize=(12, 5))
+    fig.patch.set_facecolor('#1e1e1e')
+
+    # 左圖：3D 軌跡
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax1.set_facecolor('#1e1e1e')
+
+    colors = plt.cm.cool(np.linspace(0, 1, len(traj)))
+    for i in range(len(traj)-1):
+        ax1.plot(traj[i:i+2, 0], traj[i:i+2, 1], traj[i:i+2, 2],
+                color=colors[i], linewidth=1.5)
+
+    ax1.scatter(*traj[0],  color='#4ec9b0', s=100, label='Start', zorder=5)
+    ax1.scatter(*traj[-1], color='#f44747', s=100, label='End',   zorder=5)
+    ax1.scatter(*target,   color='#dcdcaa', s=200, marker='*', label='Target', zorder=5)
+
+    # 成功半徑球
+    u = np.linspace(0, 2*np.pi, 20)
+    v = np.linspace(0, np.pi, 20)
+    r = 1.0
+    x = target[0] + r * np.outer(np.cos(u), np.sin(v))
+    y = target[1] + r * np.outer(np.sin(u), np.sin(v))
+    z = target[2] + r * np.outer(np.ones(np.size(u)), np.cos(v))
+    ax1.plot_surface(x, y, z, alpha=0.1, color='#dcdcaa')
+
+    ax1.set_xlabel('X', color='white')
+    ax1.set_ylabel('Y', color='white')
+    ax1.set_zlabel('Z', color='white')
+    ax1.set_title('3D Flight Trajectory', color='white')
+    ax1.legend(facecolor='#2d2d2d', labelcolor='white')
+    ax1.tick_params(colors='white')
+
+    # 右圖：距離隨時間變化
+    ax2 = fig.add_subplot(122)
+    ax2.set_facecolor('#1e1e1e')
+
+    dists = [np.linalg.norm(p - target) for p in traj]
+    ax2.plot(dists, color='#569cd6', linewidth=2)
+    ax2.axhline(y=1.0, color='#4ec9b0', linestyle='--', alpha=0.7, label='Success (1.0m)')
+    ax2.fill_between(range(len(dists)), 0, 1.0, alpha=0.1, color='#4ec9b0')
+
+    ax2.set_xlabel('Steps', color='white')
+    ax2.set_ylabel('Distance to Target (m)', color='white')
+    ax2.set_title('Distance over Time', color='white')
+    ax2.legend(facecolor='#2d2d2d', labelcolor='white')
+    ax2.tick_params(colors='white')
+    ax2.grid(True, alpha=0.2)
+    for spine in ax2.spines.values():
+        spine.set_color('#444')
+
+    plt.tight_layout()
+    plt.savefig('flight_trajectory.png', dpi=150,
+                bbox_inches='tight', facecolor='#1e1e1e')
+    print("軌跡圖存到 flight_trajectory.png")
 
 def train(env, resume=False, checkpoint_path=None):
     checkpoint_callback = CheckpointCallback(
@@ -439,29 +499,40 @@ def train(env, resume=False, checkpoint_path=None):
     model.save('./checkpoints2/final/final_last_model')
 
 
-def test(env):
+
+def test(env, n_episodes=10):
     model = PPO.load('checkpoints2/best/best_model')
-    obs, _ = env.reset()
-    total_reward = 0
+    results = []
 
-    success = False
-    for step in range(env.max_steps):
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        if info.get('is_success', False):
-            success = True
+    for ep in range(n_episodes):
+        obs, _ = env.reset()
+        total_reward = 0
+        success = False
+        trajectory = []
 
-        dist = np.linalg.norm(obs[:3] * 10.0) # 反向縮放回實際距離
-        if step % 20 == 0 or terminated:
-            print(f"Step {step:3d} | 距離目標: {dist:.2f}m | 獎勵: {reward:.2f}")
+        for step in range(env.max_steps):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+            pose, _ = env.ros.get_state()
+            trajectory.append(pose.copy())
 
-        if terminated or truncated:
-            print(f"🏁 測試結束 | 總獎勵: {total_reward:.2f} | 最終步數: {step} | success: {success}")
-            break
+            if info.get('is_success', False):
+                success = True
 
+            if terminated or truncated:
+                break
 
+        results.append({'success': success, 'reward': total_reward, 'steps': step})
+        print(f"Episode {ep+1:2d} | 總獎勵: {total_reward:.2f} | 步數: {step} | success: {success}")
 
+    sr = sum(r['success'] for r in results) / n_episodes
+    avg_reward = np.mean([r['reward'] for r in results])
+    print(f"\n=== 總結 ===")
+    print(f"Success Rate: {sr:.0%}")
+    print(f"Avg Reward:   {avg_reward:.2f}")
+
+    plot_trajectory(trajectory, env.target)
 
 
 def sanity_check(ros: DroneROSInterface):
@@ -524,7 +595,7 @@ def main():
         elif args.mode == 'train':
             train(env, resume=args.resume, checkpoint_path=args.checkpoint)
         else:
-            test(env)
+            test(env, n_episodes=10)
     finally:
         executor.shutdown()
         spin_thread.join(timeout=2.0)
