@@ -286,7 +286,7 @@ class DroneGymEnv(gym.Env):
             reward += 5.0 * math.exp(-curr_dist * 2)
 
         if abs(self.prev_dist - curr_dist) < 0.01 and self.step_count > 15:
-            reward -= 0.5
+            reward -= 1.0
 
         reward += (self.prev_dist - curr_dist) * 1.5
         self.prev_dist = curr_dist
@@ -296,7 +296,7 @@ class DroneGymEnv(gym.Env):
         # 當距離小於 1.0m 且已經過 15 步，視為成功到達目標
         # 剛 reset 後，無人機可能還沒穩定，或目標剛好生成在附近。因此給予一個緩衝期，讓無人機有時間調整位置。
         if curr_dist < 1.0 and self.step_count > 15:
-            reward += 10.0
+            reward += 20.0
             terminated = True
             success = True
 
@@ -387,59 +387,61 @@ def find_latest_checkpoint(folder='./checkpoints2/last'):
     return os.path.join(folder, checkpoint_files[0])
 
 def plot_trajectory(trajectory, target):
-    import matplotlib
+        import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
     traj = np.array(trajectory)
-    fig = plt.figure(figsize=(12, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     fig.patch.set_facecolor('#1e1e1e')
 
-    # 左圖：3D 軌跡
-    ax1 = fig.add_subplot(121, projection='3d')
+    # 左圖：XY 俯視圖
+    ax1 = axes[0]
     ax1.set_facecolor('#1e1e1e')
-
-    colors = plt.cm.cool(np.linspace(0, 1, len(traj)))
-    for i in range(len(traj)-1):
-        ax1.plot(traj[i:i+2, 0], traj[i:i+2, 1], traj[i:i+2, 2],
-                color=colors[i], linewidth=1.5)
-
-    ax1.scatter(*traj[0],  color='#4ec9b0', s=100, label='Start', zorder=5)
-    ax1.scatter(*traj[-1], color='#f44747', s=100, label='End',   zorder=5)
-    ax1.scatter(*target,   color='#dcdcaa', s=200, marker='*', label='Target', zorder=5)
-
-    # 成功半徑球
-    u = np.linspace(0, 2*np.pi, 20)
-    v = np.linspace(0, np.pi, 20)
-    r = 1.0
-    x = target[0] + r * np.outer(np.cos(u), np.sin(v))
-    y = target[1] + r * np.outer(np.sin(u), np.sin(v))
-    z = target[2] + r * np.outer(np.ones(np.size(u)), np.cos(v))
-    ax1.plot_surface(x, y, z, alpha=0.1, color='#dcdcaa')
-
-    ax1.set_xlabel('X', color='white')
-    ax1.set_ylabel('Y', color='white')
-    ax1.set_zlabel('Z', color='white')
-    ax1.set_title('3D Flight Trajectory', color='white')
+    ax1.plot(traj[:, 0], traj[:, 1], color='#569cd6', linewidth=1.5)
+    ax1.scatter(traj[0, 0], traj[0, 1], color='#4ec9b0', s=100, label='Start', zorder=5)
+    ax1.scatter(traj[-1, 0], traj[-1, 1], color='#f44747', s=100, label='End', zorder=5)
+    ax1.scatter(target[0], target[1], color='#dcdcaa', s=200, marker='*', label='Target', zorder=5)
+    circle = plt.Circle((target[0], target[1]), 1.0, color='#dcdcaa', fill=False, linestyle='--', alpha=0.5)
+    ax1.add_patch(circle)
+    ax1.set_xlabel('X (m)', color='white')
+    ax1.set_ylabel('Y (m)', color='white')
+    ax1.set_title('Top View (XY)', color='white')
     ax1.legend(facecolor='#2d2d2d', labelcolor='white')
     ax1.tick_params(colors='white')
+    ax1.set_aspect('equal')
+    for spine in ax1.spines.values():
+        spine.set_color('#444')
 
-    # 右圖：距離隨時間變化
-    ax2 = fig.add_subplot(122)
+    # 中圖：高度變化
+    ax2 = axes[1]
     ax2.set_facecolor('#1e1e1e')
-
-    dists = [np.linalg.norm(p - target) for p in traj]
-    ax2.plot(dists, color='#569cd6', linewidth=2)
-    ax2.axhline(y=1.0, color='#4ec9b0', linestyle='--', alpha=0.7, label='Success (1.0m)')
-    ax2.fill_between(range(len(dists)), 0, 1.0, alpha=0.1, color='#4ec9b0')
-
+    ax2.plot(traj[:, 2], color='#4ec9b0', linewidth=2)
+    ax2.axhline(y=target[2], color='#dcdcaa', linestyle='--', alpha=0.7, label=f'Target z={target[2]:.1f}m')
+    ax2.axhline(y=0.5, color='#f44747', linestyle='--', alpha=0.5, label='Min height')
     ax2.set_xlabel('Steps', color='white')
-    ax2.set_ylabel('Distance to Target (m)', color='white')
-    ax2.set_title('Distance over Time', color='white')
+    ax2.set_ylabel('Height (m)', color='white')
+    ax2.set_title('Height over Time', color='white')
     ax2.legend(facecolor='#2d2d2d', labelcolor='white')
     ax2.tick_params(colors='white')
     ax2.grid(True, alpha=0.2)
     for spine in ax2.spines.values():
+        spine.set_color('#444')
+
+    # 右圖：距離變化
+    ax3 = axes[2]
+    ax3.set_facecolor('#1e1e1e')
+    dists = [np.linalg.norm(p - target) for p in traj]
+    ax3.plot(dists, color='#569cd6', linewidth=2)
+    ax3.axhline(y=1.0, color='#4ec9b0', linestyle='--', alpha=0.7, label='Success (1.0m)')
+    ax3.fill_between(range(len(dists)), 0, 1.0, alpha=0.1, color='#4ec9b0')
+    ax3.set_xlabel('Steps', color='white')
+    ax3.set_ylabel('Distance to Target (m)', color='white')
+    ax3.set_title('Distance over Time', color='white')
+    ax3.legend(facecolor='#2d2d2d', labelcolor='white')
+    ax3.tick_params(colors='white')
+    ax3.grid(True, alpha=0.2)
+    for spine in ax3.spines.values():
         spine.set_color('#444')
 
     plt.tight_layout()
