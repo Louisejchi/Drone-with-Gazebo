@@ -285,8 +285,8 @@ class DroneGymEnv(gym.Env):
         if curr_dist < 2.0:
             reward += 5.0 * math.exp(-curr_dist * 2)
 
-        if abs(self.prev_dist - curr_dist) < 0.01 and self.step_count > 15:
-            reward -= 1.0
+        if abs(self.prev_dist - curr_dist) < 0.0005 and self.step_count > 30:
+            reward -= 0.5
 
         reward += (self.prev_dist - curr_dist) * 1.5
         self.prev_dist = curr_dist
@@ -387,10 +387,9 @@ def find_latest_checkpoint(folder='./checkpoints2/last'):
     return os.path.join(folder, checkpoint_files[0])
 
 def plot_trajectory(trajectory, target):
-        import matplotlib
+    import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-
     traj = np.array(trajectory)
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     fig.patch.set_facecolor('#1e1e1e')
