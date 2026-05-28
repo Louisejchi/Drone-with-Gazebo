@@ -281,12 +281,12 @@ class DroneGymEnv(gym.Env):
         curr_dist = np.linalg.norm(pose - self.target) # 計算當前距離
         
         # 獎勵設計：距離越近獎勵越高，快速接近目標也有額外獎勵，停滯不前有輕微懲罰
-        reward = 3.0 * math.exp(-curr_dist)
+        reward = 1.5 * math.exp(-curr_dist)
         if curr_dist < 2.0:
-            reward += 5.0 * math.exp(-curr_dist * 2)
+            reward += 2.5 * math.exp(-curr_dist * 2)
 
-        if abs(self.prev_dist - curr_dist) < 0.0005 and self.step_count > 30:
-            reward -= 0.5
+        if abs(self.prev_dist - curr_dist) < 0.005 and self.step_count > 30:
+            reward -= 0.3
 
         reward += (self.prev_dist - curr_dist) * 1.5
         self.prev_dist = curr_dist
@@ -296,14 +296,14 @@ class DroneGymEnv(gym.Env):
         # 當距離小於 1.0m 且已經過 15 步，視為成功到達目標
         # 剛 reset 後，無人機可能還沒穩定，或目標剛好生成在附近。因此給予一個緩衝期，讓無人機有時間調整位置。
         if curr_dist < 1.0 and self.step_count > 15:
-            reward += 20.0
+            reward += 10.0
             terminated = True
             success = True
 
         # 如果高度過低或過高，視為失敗
         if self.step_count > 15:
             if pose[2] < 0.1 or pose[2] > 7.0:
-                reward -= 10.0
+                reward -= 5.0
                 terminated = True
             elif pose[2] < 0.5 or pose[2] > 4.0:
                 reward -= 0.1
@@ -481,6 +481,8 @@ def train(env, resume=False, checkpoint_path=None):
 
         print("optimizer lr =", model.policy.optimizer.param_groups[0]['lr'])
         print("schedule lr =", model.lr_schedule(1.0))
+        #print(f"Resumed from: {checkpoint_path}")
+        #print(f"Learning rate: {model.policy.optimizer.param_groups[0]['lr']}")
     else:
         if resume:
             print("⚠️ 找不到可用的 checkpoint，將從頭開始訓練。")
