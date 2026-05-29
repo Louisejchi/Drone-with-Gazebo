@@ -348,7 +348,7 @@ class BestModelCallback(BaseCallback):
                 mean_score = np.mean([ep['r'] for ep in self.model.ep_info_buffer])
                 mean_len = np.mean([ep['l'] for ep in self.model.ep_info_buffer])
                 # 計算成功率：reward > 某個門檻視為成功
-                success_count = sum(1 for ep in self.model.ep_info_buffer if ep['r'] > 50)
+                success_count = sum(1 for ep in self.model.ep_info_buffer if ep['r'] > 15)
                 success_rate = success_count / len(self.model.ep_info_buffer)
 
                 print(f"[Eval] steps={self.num_timesteps} | "
