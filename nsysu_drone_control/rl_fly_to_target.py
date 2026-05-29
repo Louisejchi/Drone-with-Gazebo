@@ -491,6 +491,7 @@ def train(env, resume=False, checkpoint_path=None):
             learning_rate=3e-4, #1E-4
             n_steps=2048,
             batch_size=64, # 128
+            ent_coef=0.01,
             tensorboard_log='./ppo_drone_logs/'
         )
 
