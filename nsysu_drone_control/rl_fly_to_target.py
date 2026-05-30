@@ -285,10 +285,10 @@ class DroneGymEnv(gym.Env):
         if curr_dist < 2.0:
             reward += 2.5 * math.exp(-curr_dist * 2)
 
-        if abs(self.prev_dist - curr_dist) < 0.005 and self.step_count > 30:
-            reward -= 0.3
+        #if abs(self.prev_dist - curr_dist) < 0.005 and self.step_count > 30:
+        #   reward -= 0.3
 
-        reward += (self.prev_dist - curr_dist) * 1.5
+        reward += (self.prev_dist - curr_dist) * 2.0
         self.prev_dist = curr_dist
 
         terminated = False
