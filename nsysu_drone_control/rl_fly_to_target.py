@@ -471,13 +471,14 @@ def train(env, resume=False, checkpoint_path=None):
     if resume and checkpoint_path is not None and os.path.isfile(checkpoint_path):
         model = PPO.load(checkpoint_path, env=env)
         # 降低 learning rate
-        new_lr = 1e-4
+        new_lr = 5e-5
+
         model.learning_rate = new_lr
         model.lr_schedule = lambda _: new_lr
 
         for param_group in model.policy.optimizer.param_groups:
             param_group['lr'] = new_lr
-            print(f"Learning rate 調整為 1e-4")
+            print(f"Learning rate 調整為 5e-5")
 
         print("optimizer lr =", model.policy.optimizer.param_groups[0]['lr'])
         print("schedule lr =", model.lr_schedule(1.0))
