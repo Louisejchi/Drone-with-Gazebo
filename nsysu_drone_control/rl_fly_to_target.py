@@ -28,6 +28,21 @@ DroneGymEnv
     ↓
 PPO 訓練
 '''
+TEST_TARGETS = [
+    [ 5.0,  0.0, 2.0],
+    [-5.0,  0.0, 2.0],
+    [ 0.0,  5.0, 2.0],
+    [ 0.0, -5.0, 2.0],
+
+    [ 5.0,  5.0, 3.0],
+    [-5.0, -5.0, 3.0],
+
+    [ 7.0,  3.0, 3.5],
+    [-7.0,  3.0, 3.5],
+
+    [ 3.0, -7.0, 3.5],
+    [-3.0, -7.0, 3.5],
+]
 
 # ROS 跟 Python RL 的橋樑
 # 負責: 1. 收 ROS 資料 2. 發 ROS 指令 3. 幫 RL 拿到目前狀態
@@ -505,20 +520,35 @@ def train(env, resume=False, checkpoint_path=None):
 
 
 
-def test(env, n_episodes=10):
+def test(env):
     model = PPO.load('checkpoints2/best/best_model')
+
     results = []
 
-    for ep in range(n_episodes):
+    for ep, target in enumerate(TEST_TARGETS):
+
         obs, _ = env.reset()
+
+        env.target = np.array(target, dtype=np.float32)
+
+        pose, _ = env.ros.get_state()
+        env.prev_dist = np.linalg.norm(pose - env.target)
+
         total_reward = 0
         success = False
         trajectory = []
 
         for step in range(env.max_steps):
-            action, _ = model.predict(obs, deterministic=True)
+
+            action, _ = model.predict(
+                obs,
+                deterministic=True
+            )
+
             obs, reward, terminated, truncated, info = env.step(action)
+
             total_reward += reward
+
             pose, _ = env.ros.get_state()
             trajectory.append(pose.copy())
 
@@ -528,17 +558,38 @@ def test(env, n_episodes=10):
             if terminated or truncated:
                 break
 
-        results.append({'success': success, 'reward': total_reward, 'steps': step})
-        print(f"Episode {ep+1:2d} | 總獎勵: {total_reward:.2f} | 步數: {step} | success: {success}")
+        episode_steps = step + 1
 
-    sr = sum(r['success'] for r in results) / n_episodes
-    avg_reward = np.mean([r['reward'] for r in results])
-    print(f"\n=== 總結 ===")
-    print(f"Success Rate: {sr:.0%}")
-    print(f"Avg Reward:   {avg_reward:.2f}")
+        results.append({
+            'success': success,
+            'reward': total_reward,
+            'steps': episode_steps
+        })
 
-    plot_trajectory(trajectory, env.target)
+        print(
+            f"Target {ep+1:2d} {target} | "
+            f"Reward={total_reward:8.2f} | "
+            f"Steps={episode_steps:3d} | "
+            f"Success={success}"
+        )
 
+    success_rate = np.mean([r['success'] for r in results])
+
+    rewards = [r['reward'] for r in results]
+    steps = [r['steps'] for r in results]
+
+    print("\n========== SUMMARY ==========")
+    print(f"Success Rate : {success_rate:.2%}")
+    print(f"Avg Reward   : {np.mean(rewards):.2f}")
+    print(f"Reward Std   : {np.std(rewards):.2f}")
+    print(f"Avg Steps    : {np.mean(steps):.1f}")
+    print(f"Steps Std    : {np.std(steps):.1f}")
+    print("=============================\n")
+
+    plot_trajectory(
+        trajectory,
+        np.array(TEST_TARGETS[-1], dtype=np.float32)
+    )
 
 def sanity_check(ros: DroneROSInterface):
     print("等待第一筆 pose 進來...")
@@ -600,7 +651,7 @@ def main():
         elif args.mode == 'train':
             train(env, resume=args.resume, checkpoint_path=args.checkpoint)
         else:
-            test(env, n_episodes=10)
+            test(env)
     finally:
         executor.shutdown()
         spin_thread.join(timeout=2.0)
