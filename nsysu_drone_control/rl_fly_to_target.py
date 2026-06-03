@@ -44,6 +44,7 @@ TEST_TARGETS = [
     [-3.0, -7.0, 3.5],
 ]
 
+
 # ROS 跟 Python RL 的橋樑
 # 負責: 1. 收 ROS 資料 2. 發 ROS 指令 3. 幫 RL 拿到目前狀態
 class DroneROSInterface(Node):
@@ -298,7 +299,10 @@ class DroneGymEnv(gym.Env):
         # 獎勵設計：距離越近獎勵越高，快速接近目標也有額外獎勵，停滯不前有輕微懲罰
         reward = 1.5 * math.exp(-curr_dist)
         if curr_dist < 2.0:
-            reward += 2.5 * math.exp(-curr_dist * 2)
+            reward_add = 2.5 * math.exp(-curr_dist * 2)
+            if self.step_count % 50 == 0:
+                print(f"curr_dist < 2.0 :{reward_add: 3f}")
+            reward += reward_add
 
         #if abs(self.prev_dist - curr_dist) < 0.005 and self.step_count > 30:
         #   reward -= 0.3
@@ -312,6 +316,8 @@ class DroneGymEnv(gym.Env):
         # 剛 reset 後，無人機可能還沒穩定，或目標剛好生成在附近。因此給予一個緩衝期，讓無人機有時間調整位置。
         if curr_dist < 1.0 and self.step_count > 15:
             reward += 10.0
+            if self.step_count % 50 == 0:
+                print(f"curr_pose :{pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f}")
             terminated = True
             success = True
 
