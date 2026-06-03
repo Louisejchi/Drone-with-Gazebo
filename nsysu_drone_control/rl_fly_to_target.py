@@ -356,34 +356,31 @@ class TrainLogCallback(BaseCallback):
 
 # 自訂 callback：定期評估模型表現，並在表現提升時保存最佳模型
 class BestModelCallback(BaseCallback):
-    def __init__(self, save_path="./checkpoints2/best/best_model.zip", eval_freq=10000, verbose=1):
-        super().__init__(verbose)
-        self.save_path = save_path
-        self.eval_freq = eval_freq
-        self.best_score = -np.inf
+    def __init__(self, save_path="./checkpoints2/best/best_model.zip", eval_freq=10000):
+        super().__init__()
+        self.save_path    = save_path
+        self.eval_freq    = eval_freq
+        self.best_sr      = 0.0  # 改用 success_rate 當判斷標準
 
     def _on_step(self):
         if self.n_calls % self.eval_freq == 0:
-            # 直接從訓練過程的 episode buffer 拿資料，不需要額外跑 episode
-            if len(self.model.ep_info_buffer) > 0:
-                mean_score = np.mean([ep['r'] for ep in self.model.ep_info_buffer])
-                mean_len = np.mean([ep['l'] for ep in self.model.ep_info_buffer])
-                # 計算成功率：reward > 某個門檻視為成功
-                success_count = sum(1 for ep in self.model.ep_info_buffer if ep['r'] > 15)
-                success_rate = success_count / len(self.model.ep_info_buffer)
+            buf = self.model.ep_info_buffer
+            if buf:
+                mean_score   = np.mean([ep['r'] for ep in buf])
+                mean_len     = np.mean([ep['l'] for ep in buf])
+                success_rate = np.mean([ep.get('is_success', False) for ep in buf])
 
                 print(f"[Eval] steps={self.num_timesteps} | "
                       f"score={mean_score:.2f} | "
                       f"ep_len={mean_len:.1f} | "
                       f"success_rate={success_rate:.2%}")
 
-                if mean_score > self.best_score:
-                    self.best_score = mean_score
-                    print("🔥 New best model saved!")
+                if success_rate > self.best_sr:  # 用 success_rate 判斷
+                    self.best_sr = success_rate
+                    print(f"🔥 New best model! SR={success_rate:.2%}")
                     os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
                     self.model.save(self.save_path)
         return True
-
 
 def find_latest_checkpoint(folder='./checkpoints2/last'):
     """從 checkpoint 資料夾找出最後建立的模型檔。"""
