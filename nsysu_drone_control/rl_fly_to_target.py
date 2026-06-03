@@ -18,6 +18,7 @@ import time
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
+import random
 # system archeticture
 '''
 ROS2/Gazebo
@@ -28,22 +29,11 @@ DroneGymEnv
     ↓
 PPO 訓練
 '''
+np.random.seed(42)
 TEST_TARGETS = [
-    [ 5.0,  0.0, 2.0],
-    [-5.0,  0.0, 2.0],
-    [ 0.0,  5.0, 2.0],
-    [ 0.0, -5.0, 2.0],
-
-    [ 5.0,  5.0, 3.0],
-    [-5.0, -5.0, 3.0],
-
-    [ 7.0,  3.0, 3.5],
-    [-7.0,  3.0, 3.5],
-
-    [ 3.0, -7.0, 3.5],
-    [-3.0, -7.0, 3.5],
+    np.random.uniform(low=[-8.0, -8.0, 0.5], high=[8.0, 8.0, 4.0]).tolist()
+    for _ in range(10)
 ]
-
 
 # ROS 跟 Python RL 的橋樑
 # 負責: 1. 收 ROS 資料 2. 發 ROS 指令 3. 幫 RL 拿到目前狀態
@@ -368,7 +358,7 @@ class BestModelCallback(BaseCallback):
             if buf:
                 mean_score   = np.mean([ep['r'] for ep in buf])
                 mean_len     = np.mean([ep['l'] for ep in buf])
-                success_rate = np.mean([ep.get('is_success', False) for ep in buf])
+                success_rate = np.mean([ep.get('is_success', ep['r'] > 15) for ep in buf])
 
                 print(f"[Eval] steps={self.num_timesteps} | "
                       f"score={mean_score:.2f} | "
@@ -404,7 +394,7 @@ def find_latest_checkpoint(folder='./checkpoints2/last'):
     checkpoint_files.sort(key=lambda f: checkpoint_step(f), reverse=True)
     return os.path.join(folder, checkpoint_files[0])
 
-def plot_trajectory(trajectory, target):
+def plot_trajectory(trajectory, target, output='flight_trajectory.png'):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -462,9 +452,9 @@ def plot_trajectory(trajectory, target):
         spine.set_color('#444')
 
     plt.tight_layout()
-    plt.savefig('flight_trajectory.png', dpi=150,
+    plt.savefig(output, dpi=150,
                 bbox_inches='tight', facecolor='#1e1e1e')
-    print("軌跡圖存到 flight_trajectory.png")
+    print(f"軌跡圖存到 {output}")
 
 def train(env, resume=False, checkpoint_path=None):
     checkpoint_callback = CheckpointCallback(
@@ -525,61 +515,55 @@ def train(env, resume=False, checkpoint_path=None):
 
 def test(env):
     model = PPO.load('checkpoints2/best/best_model')
-
     results = []
 
+    os.makedirs('logs', exist_ok=True)
+
     for ep, target in enumerate(TEST_TARGETS):
-
         obs, _ = env.reset()
-
         env.target = np.array(target, dtype=np.float32)
-
         pose, _ = env.ros.get_state()
         env.prev_dist = np.linalg.norm(pose - env.target)
-
         total_reward = 0
         success = False
         trajectory = []
 
         for step in range(env.max_steps):
-
-            action, _ = model.predict(
-                obs,
-                deterministic=True
-            )
-
+            action, _ = model.predict(obs, deterministic=True)
             obs, reward, terminated, truncated, info = env.step(action)
-
             total_reward += reward
-
             pose, _ = env.ros.get_state()
             trajectory.append(pose.copy())
-
             if info.get('is_success', False):
                 success = True
-
             if terminated or truncated:
                 break
 
         episode_steps = step + 1
-
         results.append({
             'success': success,
-            'reward': total_reward,
-            'steps': episode_steps
+            'reward':  total_reward,
+            'steps':   episode_steps
         })
 
+        status = '✅' if success else '❌'
         print(
-            f"Target {ep+1:2d} {target} | "
+            f"Target {ep+1:2d} {status} {target} | "
             f"Reward={total_reward:8.2f} | "
             f"Steps={episode_steps:3d} | "
             f"Success={success}"
         )
 
-    success_rate = np.mean([r['success'] for r in results])
+        # 每個 episode 都畫圖
+        plot_trajectory(
+            trajectory,
+            np.array(target, dtype=np.float32),
+            output=f'logs/traj_ep{ep+1:02d}.png'
+        )
 
+    success_rate = np.mean([r['success'] for r in results])
     rewards = [r['reward'] for r in results]
-    steps = [r['steps'] for r in results]
+    steps   = [r['steps']  for r in results]
 
     print("\n========== SUMMARY ==========")
     print(f"Success Rate : {success_rate:.2%}")
@@ -588,11 +572,6 @@ def test(env):
     print(f"Avg Steps    : {np.mean(steps):.1f}")
     print(f"Steps Std    : {np.std(steps):.1f}")
     print("=============================\n")
-
-    plot_trajectory(
-        trajectory,
-        np.array(TEST_TARGETS[-1], dtype=np.float32)
-    )
 
 def sanity_check(ros: DroneROSInterface):
     print("等待第一筆 pose 進來...")
