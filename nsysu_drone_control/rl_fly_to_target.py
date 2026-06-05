@@ -302,6 +302,12 @@ class DroneGymEnv(gym.Env):
 
         terminated = False
         success = False
+        
+        z_error = abs(pose[2] - self.target[2])
+        if z_error > 0.5 and self.step_count > 15:
+            reward -= z_error * 0.2
+
+
         # 當距離小於 1.0m 且已經過 15 步，視為成功到達目標
         # 剛 reset 後，無人機可能還沒穩定，或目標剛好生成在附近。因此給予一個緩衝期，讓無人機有時間調整位置。
         if curr_dist < 1.0 and self.step_count > 15:
@@ -479,14 +485,14 @@ def train(env, resume=False, checkpoint_path=None):
     if resume and checkpoint_path is not None and os.path.isfile(checkpoint_path):
         model = PPO.load(checkpoint_path, env=env)
         # 降低 learning rate
-        new_lr = 5e-5
+        new_lr = 1e-4
 
         model.learning_rate = new_lr
         model.lr_schedule = lambda _: new_lr
 
         for param_group in model.policy.optimizer.param_groups:
             param_group['lr'] = new_lr
-            print(f"Learning rate 調整為 5e-5")
+            print(f"Learning rate 調整為 1e-4")
 
         print("optimizer lr =", model.policy.optimizer.param_groups[0]['lr'])
         print("schedule lr =", model.lr_schedule(1.0))
