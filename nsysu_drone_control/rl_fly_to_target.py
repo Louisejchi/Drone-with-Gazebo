@@ -260,7 +260,7 @@ class DroneGymEnv(gym.Env):
             time.sleep(0.1)
             pose, vel = self.ros.get_state()
             # 要求：pose 有數值、z 高度超過 0.4m（已起飛）且速度不是異常大
-            if np.any(pose != 0.0) and pose[2] > 0.4 and np.linalg.norm(vel) < 10.0:
+            if np.any(pose != 0.0) and pose[2] > 0.4 and np.linalg.norm(vel) < 2.0:
                 break
         else:
             print("⚠️ reset() 超時：在 6 秒內未取得穩定 pose，將接著生成目標（可能需要檢查 sim）")
@@ -290,8 +290,8 @@ class DroneGymEnv(gym.Env):
         reward = 1.5 * math.exp(-curr_dist)
         if curr_dist < 2.0:
             reward_add = 2.5 * math.exp(-curr_dist * 2)
-            if self.step_count % 50 == 0:
-                print(f"curr_dist < 2.0 :{reward_add: 3f}")
+            #if self.step_count % 50 == 0:
+            #    print(f"curr_dist < 2.0 :{reward_add: 3f}")
             reward += reward_add
 
         #if abs(self.prev_dist - curr_dist) < 0.005 and self.step_count > 30:
@@ -311,12 +311,14 @@ class DroneGymEnv(gym.Env):
         # 當距離小於 1.0m 且已經過 15 步，視為成功到達目標
         # 剛 reset 後，無人機可能還沒穩定，或目標剛好生成在附近。因此給予一個緩衝期，讓無人機有時間調整位置。
         if curr_dist < 1.0 and self.step_count > 15:
-            reward += 10.0
-            if self.step_count % 50 == 0:
-                print(f"curr_pose :{pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f}")
+            reward += 200.0
+            #if self.step_count % 50 == 0:
+            #    print(f"curr_pose :{pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f}")
             terminated = True
             success = True
 
+        # 時間懲罰
+        reward -= 0.1
         # 如果高度過低或過高，視為失敗
         if self.step_count > 15:
             if pose[2] < 0.1 or pose[2] > 7.0:
@@ -485,19 +487,19 @@ def train(env, resume=False, checkpoint_path=None):
     if resume and checkpoint_path is not None and os.path.isfile(checkpoint_path):
         model = PPO.load(checkpoint_path, env=env)
         # 降低 learning rate
-        new_lr = 1e-4
+        #new_lr = 1e-4
 
-        model.learning_rate = new_lr
-        model.lr_schedule = lambda _: new_lr
+        #model.learning_rate = new_lr
+        #model.lr_schedule = lambda _: new_lr
 
-        for param_group in model.policy.optimizer.param_groups:
-            param_group['lr'] = new_lr
-            print(f"Learning rate 調整為 1e-4")
+        #for param_group in model.policy.optimizer.param_groups:
+        #    param_group['lr'] = new_lr
+        #    print(f"Learning rate 調整為 1e-4")
 
-        print("optimizer lr =", model.policy.optimizer.param_groups[0]['lr'])
-        print("schedule lr =", model.lr_schedule(1.0))
-        #print(f"Resumed from: {checkpoint_path}")
-        #print(f"Learning rate: {model.policy.optimizer.param_groups[0]['lr']}")
+        #print("optimizer lr =", model.policy.optimizer.param_groups[0]['lr'])
+        #print("schedule lr =", model.lr_schedule(1.0))
+        print(f"Resumed from: {checkpoint_path}")
+        print(f"Learning rate: {model.policy.optimizer.param_groups[0]['lr']}")
     else:
         if resume:
             print("⚠️ 找不到可用的 checkpoint，將從頭開始訓練。")
@@ -506,13 +508,13 @@ def train(env, resume=False, checkpoint_path=None):
             learning_rate=3e-4, #1E-4
             n_steps=2048,
             batch_size=64, # 128
-            ent_coef=0.01,
+            ent_coef=0.005,
             tensorboard_log='./ppo_drone_logs/'
         )
 
     model.learn(
         total_timesteps=500_000,
-        reset_num_timesteps=False,
+        reset_num_timesteps=not resume,
         callback=CallbackList([checkpoint_callback, TrainLogCallback(), best_callback])
     )
     model.save('./checkpoints2/final/final_last_model')
