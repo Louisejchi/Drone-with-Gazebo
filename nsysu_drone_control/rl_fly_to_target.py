@@ -260,7 +260,7 @@ class DroneGymEnv(gym.Env):
             time.sleep(0.1)
             pose, vel = self.ros.get_state()
             # 要求：pose 有數值、z 高度超過 0.4m（已起飛）且速度不是異常大
-            if np.any(pose != 0.0) and pose[2] > 0.4 and np.linalg.norm(vel) < 2.0:
+            if np.any(pose != 0.0) and pose[2] > 0.7 and np.linalg.norm(vel) < 2.0:
                 break
         else:
             print("⚠️ reset() 超時：在 6 秒內未取得穩定 pose，將接著生成目標（可能需要檢查 sim）")
